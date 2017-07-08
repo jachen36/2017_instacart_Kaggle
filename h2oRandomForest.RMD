@@ -1,0 +1,141 @@
+---
+title: "H2O RandomForest"
+author: "Jacinto"
+date: "July 3, 2017"
+output: html_document
+---
+
+```
+TODO:  
+  1. get varimp
+  2. col_sample_rate_per_tree ~ 0.5 
+  3. min_rows ~5+ 
+  4. sample_rate ~0.5 
+  5. should try ntrees with default? 
+  7. use logloss? 
+  8. For training and testing need them to be whole users and now random rows 
+
+```
+
+```{r}
+library(h2o)
+```
+
+# Start H2O and import data  
+```{r}
+h2o.init(max_mem_size = "8G")
+```
+```{r}
+all <- h2o.importFile("data/trainDF1M.csv")
+```
+```{r}
+h2o.describe(all)
+```
+
+# Split dataset into train and validation  
+```{r}
+# names of the variables 
+x <- setdiff(names(all), "reordered")
+y <- "reordered"
+
+parts <- h2o.splitFrame(all, 1/5)
+valid <- parts[[1]]
+train <- parts[[2]]
+
+rm(parts)
+h2o.rm(all)
+```
+```{r}
+train100k <- train[1:100000,]
+test100k <- train[100001:200000,]
+```
+
+# Model  
+
+```{r}
+m1 <- h2o.randomForest(x = x, y = y, training_frame = train100k, 
+                       model_id = "RF_default", validation_frame = valid,
+                       balance_classes = TRUE)
+```
+
+```{r}
+m1
+```
+
+```{r}
+h2o.confusionMatrix(m1)
+```
+```{r}
+h2o.performance(m1, test100k)
+```
+
+
+# Grid approach  
+
+```{r}
+g <- h2o.grid("randomForest", grid_id = "RF_2",
+              search_criteria = list(
+                strategy = "RandomDiscrete",
+                max_models = 30
+              ),
+              hyper_params = list(
+                col_sample_rate_per_tree = c(0.5, 0.9),
+                mtries = c(4, 5, 7),
+                sample_rate = c(.5, .7, .9),
+                min_rows = c(1, 2, 5)
+              ),
+              x = x, y = y, training_frame = train100k,
+              validation_frame = valid, 
+              ntrees = 100,
+              stopping_tolerance = 0.0001,
+              stopping_rounds = 3,
+              stopping_metric = "mean_per_class_error",
+              score_tree_interval = 3,
+              balance_classes = TRUE)
+```
+```{r}
+g
+```
+
+# Performance 
+```{r}
+# h2o.performance(m1, test100k)
+```
+
+```{r}
+g_2 <- h2o.getGrid(grid_id = g@grid_id,
+                   sort_by = "mean_per_class_error",
+                   decreasing = FALSE)
+```
+```{r}
+g_2
+```
+```{r}
+bestModelloss <- h2o.getModel(g@model_ids[[1]])
+h2o.performance(bestModelloss, test100k)
+```
+
+
+```{r}
+bestModel <- h2o.getModel(g_2@model_ids[[1]])
+h2o.performance(bestModel, test100k)
+```
+
+```{r}
+g_sum <- as.data.frame(g@summary_table)
+g_sum2 <- as.data.frame(g_2@summary_table)
+```
+```{r}
+g_sum
+```
+
+```{r}
+g_sum2
+```
+
+
+# END  
+```{r}
+h2o.shutdown(prompt = FALSE)
+```
+

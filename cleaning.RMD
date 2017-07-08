@@ -1,0 +1,214 @@
+---
+title: "cleaning"
+author: "Jacinto"
+date: "June 13, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraryImport, message = FALSE}
+library(tidyverse)
+library(magrittr)
+```
+
+
+
+# aisles.csv  
+```{r}
+aisles <- read_csv("data/aisles.csv")
+```
+```{r}
+aisles
+is.na(aisles) %>% sum()
+duplicated(aisles) %>% sum()
+```
+
+Aisles file is good. Not missing values and no duplicated rows.  
+
+
+# departments.csv  
+```{r}
+depart <- read_csv("data/departments.csv")
+```
+```{r}
+depart
+```
+Looks good. Pretty small so can check by eye.  
+
+# order_products_*.csv 
+
+## prior  
+```{r}
+orderPrior <- read_csv("data/order_products__prior.csv")
+orderPrior %>% dim()
+orderPrior %>% head()
+```
+```{r}
+## Find if there are any duplicated rows
+duplicated(orderPrior) %>% sum()
+## Find if there are any missing values in the set
+sapply(orderPrior, FUN = function(x) {sum(is.na(x))})
+```
+
+```{r}
+orderPrior %>% 
+  ggplot(aes(x = add_to_cart_order)) +
+  geom_histogram(aes(y = ..density..), binwidth = 2) +
+  # geom_freqpoly(aes(y = ..density..)) +
+  ## There is no zero value
+  xlim(1, NA) + 
+  ## very right skewed at the way to 145
+  coord_cartesian(xlim = c(1, 30)) +
+  labs(title = "Order_products_prior")
+```
+```{r}
+orderPrior %>% 
+  ggplot(aes(add_to_cart_order)) +
+  geom_density(adjust = 3)  +
+  coord_cartesian(xlim = c(1, 30))
+```
+
+
+```{r}
+summary(orderPrior$add_to_cart_order)
+```
+
+Usually an order that has a large number, the other items are generally large too. Probably not an order for a single person but a group.  
+
+Otherwise order_products__prior.csv looks fine  
+
+
+## train
+```{r}
+orderTrain <- read_csv("data/order_products__train.csv")
+dim(orderTrain)
+orderTrain %>% head()
+```
+```{r}
+summary(orderTrain)
+```
+
+```{r}
+duplicated(orderTrain) %>% sum()
+sapply(orderTrain, FUN = function(x) sum(is.na(x)))
+```
+
+```{r}
+orderTrain %>% 
+  ggplot(aes(x = add_to_cart_order, y = ..density..)) +
+  geom_histogram(binwidth = 1) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  coord_cartesian(xlim = c(1, 30)) +
+  labs(title = "Order_Products_Train")
+```
+
+prior and train data set looks good.   
+
+
+# orders.csv  
+```{r}
+orders <- read_csv("data/orders.csv")
+orders %>% dim()
+orders %>% head()
+```
+
+```{r}
+duplicated(orders) %>% sum()
+sapply(orders, FUN = function(x) sum(is.na(x)))
+```
+```{r}
+summary(orders)
+```
+
+```{r}
+## Checking that na for days_since_prior_order just means it is the first order ever  
+## Result is number of rows that doesn't have first order as NA
+orders %>%
+  filter(is.na(days_since_prior_order)) %>% 
+  filter(order_number != 1) %>% nrow()
+```
+
+
+```{r}
+orders %>% 
+  ggplot(aes(days_since_prior_order)) +
+  geom_histogram(binwidth = 1) +
+  scale_y_continuous(labels = scales::unit_format("k", 1e-3)) +
+  labs(title = "Days Since Prior order")
+```
+
+
+orders.csv is good. NA are just the first for all users. And some users have day since prior order is because they ordered again during that day so not a mistake.  
+
+
+
+# products  
+```{r}
+products <- read_csv("data/products.csv")
+products %>% dim()
+products %>% head()
+```
+
+```{r}
+duplicated(products) %>% sum()
+sapply(products, FUN = function(x) sum(is.na(x)))
+```
+
+
+
+products.csv is good.  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

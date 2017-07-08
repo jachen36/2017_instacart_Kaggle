@@ -1,0 +1,79 @@
+---
+title: "for h2o dataset"
+author: "Jacinto"
+date: "July 3, 2017"
+output: html_document
+---
+
+```{r message = FALSE}
+library(tidyverse)
+library(magrittr)
+library(data.table)
+```
+
+```{r}
+load("data/trainDF_1.RData")
+```
+
+
+# Clean Data  
+
+Remove columns not needed. convert columns into characters to become factors. Reduce the significant digits on some.   
+
+```{r}
+# Remove columns not needed
+trainDF[, c("product_id", 
+            "product_name",
+            "department_id",
+            # Also removed because it contains the same info as aisles  
+            "department",
+            "aisle_id") := NULL]
+
+# Round numbers since they are not that accurate
+# The significant placement is random  
+trainDF[, ':='(diff_days_avg = round(diff_days_avg, 1),
+               diff_order_num_avg = round(diff_order_num_avg, 1),
+               reordered_prop = round(reordered_prop, 3),
+               add_to_cart_order_avg = round(add_to_cart_order_avg, 1),
+               n_item_avg = round(n_item_avg, 1),
+               order_dow_var = round(order_dow_var, 2),
+               order_hod_var = round(order_hod_var, 2),
+               order_dspo_var = round(order_dspo_var, 2))]
+
+# Convert reoredered to yes and no to be factored during import 
+trainDF[, reordered := factor(reordered, 
+                              levels = c(0,1),
+                              labels = c("No", "Yes"))]
+```
+
+
+# Export small version to csv  
+# Splitting
+```{r}
+# Dataset is too big to model on my personal computer so need to split 
+## Splitting based on users  
+set.seed(3245)
+userID <- sample(trainDF$user_id, 3080)
+userTrain <- trainDF[user_id %in% userID[1:1540]]
+userValid <- trainDF[user_id %in% userID[1541:3080]]
+
+# Remove user_id since not needed anymore
+trainDF[,user_id := NULL]
+userTrain[, user_id := NULL]
+userValid[, user_id := NULL]
+
+# Random splitting 
+set.seed(6384)
+randIDX <- sample(nrow(trainDF), sum(nrow(userTrain), nrow(userValid)))
+randTrain <- trainDF[randIDX[1:nrow(userTrain)]] 
+randValid <- trainDF[randIDX[(nrow(userTrain)+1):length(randIDX)]]
+```
+
+```{r}
+write.csv(userTrain, file = "data/userTrain.csv", row.names = FALSE)
+write.csv(userValid, file = "data/userValid.csv", row.names = FALSE)
+write.csv(randTrain, file = "data/randTrain.csv", row.names = FALSE)
+write.csv(randValid, file = "data/randValid.csv", row.names = FALSE)
+```
+
+

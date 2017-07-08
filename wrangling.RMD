@@ -1,0 +1,154 @@
+---
+title: "Wrangling Data"
+author: "Jacinto"
+date: "June 23, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(tidyverse)
+library(magrittr)
+```
+
+
+
+# Import Data  
+```{r}
+products <- read_csv("./data/products.csv")
+aisles <- read_csv("./data/aisles.csv")
+depart <- read_csv("./data/departments.csv")
+orders <- read_csv("./data/orders.csv")
+orderPrior <- read_csv("./data/order_products__prior.csv")
+orderTrain <- read_csv("./data/order_products__train.csv")
+```
+
+# Calculate some Features  
+```{r}
+# Cum Sum cannot handle na values  
+orders[is.na(orders$days_since_prior_order), "days_since_prior_order"] <- 0
+
+# Add the absolute days for users
+orders <- orders %>% 
+  ## Need to sort by user and order_number such that cum sum is done properly
+  arrange(user_id, order_number) %>% 
+  group_by(user_id) %>% 
+  mutate(abs_days = cumsum(days_since_prior_order))
+
+# Number of items in each order
+n_item_order <- orderPrior %>% 
+  group_by(order_id) %>% 
+  summarise(n_item = n())
+
+# add n_item_order to orders 
+orders <- orders %>% 
+  left_join(n_item_order, by = "order_id")
+
+rm(n_item_order)
+```
+
+
+# Merge Data
+```{r}
+prod_ais_dep <- products %>% 
+  left_join(aisles, by = "aisle_id") %>% 
+  left_join(depart, by = "department_id")
+
+orderAll <- orders %>% 
+  left_join(bind_rows(orderPrior, orderTrain), by = "order_id") 
+
+rm(products, aisles, depart)
+# orderPrior <- orderPrior[1:100,]
+# orderTrain<- orderTrain[1:100,]
+# orders <- orders[1:100,]
+# 
+# orderAll <- orderAll[1:1000,]
+```
+
+
+# Summarize Data
+```{r}
+priorIdx <- which(orderAll$eval_set == "prior")
+trainIdx <- which(orderAll$eval_set == "train")
+testIdx <- which(orderAll$eval_set == "test")
+```
+
+```{r}
+one_less_mean <- function(x) {
+  # Some products was never reordered so will always be zero
+  if(length(x) == 1){
+    return(x)
+  }
+  # Mean with one less because the first purchase is always zero
+  return(sum(x)/(length(x)-1))
+}
+
+trainDF <- orderAll[priorIdx,] %>% 
+  arrange(user_id, product_id, order_number) %>% 
+  group_by(user_id) %>% 
+  mutate(order_number_max = max(order_number)) %>% 
+  group_by(user_id, product_id) %>% 
+  # Calculate the days since product was purchased  
+  mutate(diff_days = c(0, diff(abs_days, 1))) %>% 
+            # The average between product purchase
+  summarise(diff_days_avg = one_less_mean(diff_days),
+            # Proportion of times product was reordered
+            reordered_prop = sum(reordered)/max(order_number_max-1),
+            # Average number of product added to cart
+            add_to_cart_order_avg = mean(add_to_cart_order),
+            # Average number of item in cart when product was purchased
+            n_item_avg = mean(n_item),
+            # Last absolute day product was order
+            last_reordered_day = max(abs_days)) %>% 
+  # join the train to prior data 
+  # full join because user might buy something for the first time
+  full_join(orderAll[trainIdx,], by = c("user_id", "product_id"))
+
+tmp <- orderAll[trainIdx,] %>% 
+  
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

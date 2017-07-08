@@ -1,0 +1,98 @@
+---
+title: "XGBOOSTING"
+author: "Jacinto"
+date: "June 26, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(Matrix)
+library(tidyverse)
+library(xgboost)
+library(data.table)
+```
+
+# Import Data
+```{r}
+load("./data/trainDF_1.RData")
+```
+
+
+# Minor Cleanup and Partitioning for Modeling 
+```{r}
+# Remove columns not needed
+trainDF[, c("product_id", 
+            "user_id", 
+            "product_name",
+            "department_id",
+            "aisle_id") := NULL]
+
+# Convert cateogry to factors  
+trainDF[, ':='(department = as.factor(department),
+               aisle = as.factor(aisle))]
+
+# Round numbers since they are not that accurate
+# The significant placement is random  
+trainDF[, ':='(diff_days_avg = round(diff_days_avg, 1),
+               diff_order_num_avg = round(diff_order_num_avg, 1),
+               reordered_prop = round(reordered_prop, 3),
+               add_to_cart_order_avg = round(add_to_cart_order_avg, 1),
+               n_item_avg = round(n_item_avg, 1),
+               order_dow_var = round(order_dow_var, 2),
+               order_hod_var = round(order_hod_var, 2),
+               order_dspo_var = round(order_dspo_var, 2))]
+
+# Convert and split data for modeling 
+set.seed(19823)
+trainIdx <- caret::createDataPartition(trainDF$reordered, 
+                                       p = 0.8, list = TRUE)$Resample1
+
+dtrain <- xgb.DMatrix(data = sparse.model.matrix(reordered~.-1, 
+                                                 data = trainDF[trainIdx,]),
+                      label = trainDF$reordered[trainIdx])
+
+dtest <- xgb.DMatrix(data = sparse.model.matrix(reordered~.-1, 
+                                                 data = trainDF[-trainIdx,]),
+                     label = trainDF$reordered[-trainIdx])
+
+# Save memory 
+rm(trainDF)
+gc()
+
+```
+
+
+# Model
+```{r}
+bstLinear <- xgb.train(data= dtrain, 
+                       booster = "gbtree", 
+                       nrounds = 5,
+                       eta = 1,
+                       max_depth = 20,
+                       
+                       nthread = 2,
+                       watchlist = list(train = dtrain, test = dtest),
+                       objective = "binary:logistic",
+                       eval.metric = "error",
+                       verbose = 2)
+```
+
+Doesn't seem like it works very well. I change eta from .3 to 1, max_depth from 2 to 20, nrounds from 2 to 10. They are about the same except increasing max_depth helps a lot.  
+
+```{r}
+importance_matrix <- xgb.importance(feature_names = colnames(dtrain),
+                                    model = bstLinear)
+# Top 20 most important 
+top = 20
+importance_matrix[1:top,] %>% 
+ggplot(aes(x = Feature,y = Importance)) +
+  geom_col() +
+  scale_x_discrete(limits = importance_matrix$Feature[top:1]) +
+  labs(title = "Top 20 Important Features") + 
+  coord_flip()
+```
+

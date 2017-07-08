@@ -1,0 +1,150 @@
+---
+title: "H2O RandomForest"
+author: "Jacinto"
+date: "July 3, 2017"
+output: html_document
+---
+
+```
+TODO:  
+  1. get varimp
+  2. col_sample_rate_per_tree ~ 0.5 
+  3. min_rows ~5+ 
+  4. sample_rate ~0.5 
+  5. should try ntrees with default? 
+  7. use logloss? 
+  8. For training and testing need them to be whole users and now random rows 
+
+```
+
+```{r}
+library(h2o)
+```
+
+# Start H2O and import data  
+```{r}
+h2o.init(max_mem_size = "8G")
+```
+```{r}
+userTrain <- h2o.importFile("data/userTrain.csv")
+userValid <- h2o.importFile("data/userValid.csv")
+
+randTrain <- h2o.importFile("data/randTrain.csv")
+randValid <- h2o.importFile("data/randValid.csv")
+```
+```{r}
+h2o.describe(userTrain)
+```
+
+# Get X and Y colnames  
+```{r}
+# names of the variables 
+x <- setdiff(names(userTrain), "reordered")
+y <- "reordered"
+```
+
+
+# Model  
+
+```{r}
+m1 <- h2o.randomForest(x = x, y = y, training_frame = userTrain, 
+                       model_id = "RF_default", validation_frame = userValid,
+                       balance_classes = TRUE)
+```
+
+```{r}
+m1
+```
+
+```{r}
+h2o.performance(m1, randValid)
+```
+
+
+# Grid approach  
+
+```{r}
+g <- h2o.grid("randomForest", grid_id = "RF_2",
+              search_criteria = list(
+                strategy = "RandomDiscrete",
+                max_models = 30
+              ),
+              hyper_params = list(
+                col_sample_rate_per_tree = c(0.5, 0.9),
+                mtries = c(4, 5, 7),
+                sample_rate = c(.5, .7, .9),
+                min_rows = c(1, 2, 5)
+              ),
+              x = x, y = y, training_frame = userTrain,
+              validation_frame = userValid,
+              ntrees = 100,
+              stopping_tolerance = 0.0001,
+              stopping_rounds = 3,
+              stopping_metric = "mean_per_class_error",
+              score_tree_interval = 3,
+              balance_classes = TRUE)
+```
+```{r}
+g
+```
+
+# Performance 
+
+```{r}
+bestModelloss <- h2o.getModel(g@model_ids[[1]])
+h2o.performance(bestModelloss, randValid)
+```
+```{r}
+bestModelloss
+```
+
+# Random Testing
+```{r}
+m2 <- h2o.randomForest(x = x, y = y, training_frame = randTrain, validation_frame = randValid,
+                       model_id = "RF_default_rand", balance_classes = TRUE)
+```
+```{r}
+m2
+```
+```{r}
+h2o.performance(m2, userValid)
+```
+
+```{r}
+g2 <- h2o.grid("randomForest", grid_id = "RF_rand",
+               search_criteria = list(
+                 strategy = "RandomDiscrete",
+                 max_models = 30
+               ),
+               hyper_params = list(
+                 col_sample_rate_per_tree = c(0.5, 0.9),
+                 mtries = c(4,5,7),
+                 sample_rate = c(.5, .7, .9),
+                 min_rows = c(1,2,5),
+                 max_depth = c(20, 50)
+               ),
+               x = x, y = y, training_frame = randTrain,
+               validation_frame = randValid,
+               ntrees = 100,
+               stopping_tolerance = 0.0001,
+               score_tree_interval = 3, 
+               stopping_rounds = 3,
+               balance_classes = TRUE)
+```
+```{r}
+g2
+```
+```{r}
+bestModelRand <- h2o.getModel(g2@model_ids[[1]])
+bestModelRand
+```
+```{r}
+h2o.performance(bestModelRand, userValid)
+```
+
+
+# END  
+```{r}
+h2o.shutdown(prompt = FALSE)
+```
+

@@ -1,0 +1,294 @@
+---
+title: "Cleaning part 2"
+author: "Jacinto"
+date: "June 14, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library, message=FALSE}
+library(tidyverse)
+library(magrittr)
+library(tm)
+library(caret)
+library(xgboost)
+```
+
+ 
+Goes into correcting the misclassification with the products.  
+```{r importData, message=FALSE}
+products <- read_csv("data/products.csv")
+aisles <- read_csv("data/aisles.csv")
+depart <- read_csv("data/departments.csv")
+```
+
+```{r}
+## Merge products, aisles, department
+pad <- products %>% 
+  left_join(aisles, by = "aisle_id") %>% 
+  left_join(depart, by = "department_id")
+
+pad %<>% select(product_name, aisle, 
+                department, product_id, 
+                aisle_id, department_id)
+```
+
+
+***  
+What is in the missing category for department/aisle?   
+```{r}
+pad %>% 
+  filter(department == "missing") %$% 
+  unique(product_name) %>% 
+  head(10)
+```
+It looks like most are just misclassified.   
+
+```{r}
+(pad$department == 'missing') %>% sum()
+(pad$aisle == 'missing') %>% sum()  
+(pad$department == "missing" & pad$aisle == 'missing') %>% sum()
+```
+Aisle and department are both marked as missing at the same time.  
+
+What is in other category for aisles?  
+```{r}
+pad %>% 
+  filter(aisle == "other") %$%  
+  unique(product_name) %>% 
+  head(10)
+```
+```{r}
+(pad$aisle == "other") %>% sum()
+```
+I think other is in the same position as missing.  
+
+**It is possible for other items to be missclassified**  
+Therefore, it would be interesting to use modeling to predict the categories and see what match and which didn't and correct those that didn't match.  
+
+
+***  
+Can aisle category be in multiple department?  
+```{r}
+## The number of department each aisle belongs to
+aisle_depart <- pad %>% 
+  group_by(aisle) %>% 
+  summarise(department = paste(unique(department), collapse = " ,"),
+            numberDepart = length(unique(department))) %>% 
+  arrange(department, aisle)
+
+aisle_depart %>% filter(numberDepart != 1)
+```
+
+No, all aisles have only one department they are be in so the information in department is redundant.  
+
+
+***  
+**How much are misclassified? Done by eye**  
+```{r}
+set.seed(42)
+padSample <- sample(nrow(pad), size = 100)
+```
+
+Questionable placement  
+```{r}
+pad[padSample,][c(20,55,78),1:3]
+```
+
+Chicken Breast Patties could be in *packaged poultry*  
+Designer Bowl Brush & Caddy should be in *more household*  
+Organic Fruit Yogurt Smoothie Peach Banana could be in *yogurt*. not sure if it is really baby food.  
+
+Since these are just a difference in opinion that aren't wrong per se. 
+
+
+**Wrong**  
+```{r}
+pad[padSample,1:3][c(43,45,59,71,49),]
+```
+
+The first 4 are wrong because they are in either missing or other but they clearly have a specific placemnet.  
+Buffalo Wings should be in *frozen meal* or something else but it is clearly wrong.  
+
+So there is approximately **5% error** in the categories. And most would be fixed if missing and other was corrected. In the end it is possible to have only 1% error based on one sample.   
+
+The total amount of missing and other is 1258 + 548 = 1806. Which is 3.6% of the products.  
+
+
+# Naive Bayes  
+check for class imbalance  
+```{r}
+ggplot(pad, aes(as.factor(aisle_id)))+
+  geom_bar()
+```
+Definitely imbalanced.  
+
+## Tokenize Product names  
+```{r}
+prd_corpus <- VCorpus(VectorSource(pad$product_name))
+prd_dtm <- DocumentTermMatrix(prd_corpus, 
+                              control = list(
+                                tolower = TRUE,
+                                removeNumbers = TRUE,
+                                removePunctuation = TRUE
+                              ))
+prd_dtm
+```
+
+Reduce the number of terms 
+```{r}
+# Find terms that happens at least 0.1% of the population 
+prd_freq_50 <- findFreqTerms(prd_dtm, 50)
+prd_freq_50 %>% length()
+```
+
+
+Extract and Convert tokenized product names 
+```{r}
+## Extract the terms of interest and convert them into categorical features
+# prd_terms <- apply(prd_dtm[,prd_freq_50], 2, 
+#                    (function(x){
+#                      x <- ifelse(x > 0, "Yes", "No")
+#                    }))
+```
+
+Convert DocumentTermMatrix to matrix  
+```{r}
+prd_terms <- as.matrix(prd_dtm[, prd_freq_50])
+```
+
+
+Extract rows with aisle labled as missing or other 
+```{r}
+miss_ot_idx <- which(pad$aisle %in% c("missing", "other")) 
+miss_ot_idx %>% length()
+```
+
+## Training model  
+```{r}
+y <- pad$aisle[-miss_ot_idx] %>% as.factor()
+trainIdx <- createDataPartition(y, p = 0.8, list = TRUE)$Resample1
+
+## Class needs to start from zero. 
+dtrain <- xgb.DMatrix(data = prd_terms[-miss_ot_idx,][trainIdx, ], 
+                      label = as.numeric(y[trainIdx])-1)
+
+dtest <- xgb.DMatrix(data = prd_terms[-miss_ot_idx,][-trainIdx,],
+                     label  = as.numeric(y[-trainIdx])-1)
+```
+
+```{r}
+bst <- xgb.train(data = dtrain, 
+                 max.depth = 3,
+                 eta = 1,
+                 nthread = 2,
+                 nround = 5,
+                 verbose = 1,
+                 objective = "multi:softmax",
+                 num_class = length(unique(y)),
+                 watchlist = list(train = dtrain,
+                                  test = dtest),
+                 eval_metric = "merror")
+```
+```{r}
+bstLinear <- xgb.train(data = dtrain,
+                       booster = "gblinear",
+                       nthread = 2,
+                       nrounds = 1,
+                       verbose = 1,
+                       alpha = .1,
+                       lambda = 10,
+                       watchlist = list(train = dtrain,
+                                        test = dtest),
+                       objective = "multi:softmax",
+                       num_class = length(unique(y)),
+                       eval.metric = "merror")
+```
+
+
+## Rule Based  
+```{r}
+fit50 <- train(x = prd_terms[-miss_ot_idx, ],
+               y = y,
+               method = "C5.0",
+               metric = "Accuracy",
+               tuneGrid = expand.grid(trials = c(1,5,8),
+                                      model = "rules",
+                                      winnow = FALSE),
+               trControl = trainControl(method = "LGOCV",
+                                        index = list(trainSet = trainIdx),
+                                        savePredictions = TRUE,
+                                        verboseIter = TRUE))
+```
+```{r}
+fit50
+```
+
+
+## Naive Bayes. Doesn't look useful.  
+```{r}
+# set.seed(42)
+# prd_nb <- train(x = prd_terms[-miss_ot_idx,],
+#                 y = pad$aisle[-miss_ot_idx],
+#                 method = "naive_bayes",
+#                 metric = "Accuracy",
+#                 tuneGrid = expand.grid(fL = c(1, 10, 50),
+#                                        usekernel = c(TRUE, FALSE),
+#                                        adjust = 1),
+#                 trControl = trainControl(method = "cv",
+#                                          number = 5,
+#                                          savePredictions = TRUE))
+# prd_nb
+```
+
+
+```{r}
+set.seed(42)
+prd_rf <- train(x = trainX,
+                y = trainY,
+                method = "rf",
+                metric = "Accuracy",
+                trControl = trainControl(method = "cv",
+                                         number = 5,
+                                         savePredictions = TRUE))
+prd_rf
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

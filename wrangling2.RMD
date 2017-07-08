@@ -1,0 +1,290 @@
+---
+title: "Wrangling Data"
+author: "Jacinto"
+date: "June 23, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message = FALSE}
+library(tidyverse)
+library(magrittr)
+library(data.table)
+```
+```
+# TODO:  
+  1. Maybe add variance for diff_days. Nah each product has a large range
+
+```
+
+
+
+# Import Data  
+```{r}
+products <- fread("./data/products.csv")
+aisles <- fread("./data/aisles.csv")
+depart <- fread("./data/departments.csv")
+orders <- fread("./data/orders.csv")
+orderPrior <- fread("./data/order_products__prior.csv")
+orderTrain <- fread("./data/order_products__train.csv")
+```
+
+
+# Calculate some Features  
+```{r}
+# Set days_since_prior_order to NA since cumsum cannot handle NA
+orders[is.na(days_since_prior_order), days_since_prior_order := 0]
+
+# Add the absolute days for users 
+# Need to sort by user and order_number such that days are in order to be added
+setorder(orders, user_id, order_number)
+
+           # The cumalative sum of the days after each order 
+orders[, ':='(abs_days = cumsum(days_since_prior_order),
+           # The number of order a user has made including the train/test order
+           order_number_max = max(order_number), 
+           # User's ordering habits and consistency 
+           # Not sure if this is useful when user's # of orders are different
+           # Variance of ordering day of week
+           order_dow_var = var(order_dow),
+           # Variance of ordering hour of day  
+           order_hod_var = var(order_hour_of_day),
+           # Variance of days since prior order 
+           order_dspo_var = var(days_since_prior_order)),
+    by = user_id]
+
+# Number of items in each order 
+n_item_order <- orderPrior[,.(n_item = .N), by = order_id]
+
+# Merge n_item_order to orders
+orders <- n_item_order[orders, on = "order_id"]
+
+# Save memory
+rm(n_item_order)
+```
+
+
+# Merge Data
+```{r}
+# Combine products and its aisle and department names 
+prod_ais_dep <- products %>%
+  merge(aisles, by = "aisle_id", all.x = TRUE) %>% 
+  merge(depart, by = "department_id", all.x = TRUE)
+
+# Save memory 
+rm(products, aisles, depart)
+gc()
+```
+
+```{r}
+# Combine train and orders and its product together
+orderTrTs <- orders[eval_set %in% c("train", "test")] %>% 
+  merge(orderTrain, by = "order_id", all.x = TRUE)
+
+# Remove columns not needed to save memory
+orderTrTs[, c("n_item",
+              "order_number",
+              "order_dow",
+              "order_hour_of_day",
+              "add_to_cart_order"):=NULL]
+
+# Separate into training and testing set
+orderTr <- subset(orderTrTs, eval_set == "train")
+orderTs <- subset(orderTrTs, eval_set == "test")
+# Remove columns not needed 
+orderTs[, c("product_id", "reordered") := NULL]
+
+
+rm(orderTrTs)
+
+# Combine prior orders and its product together  
+orderPr <- orders %>% 
+  merge(orderPrior, by = "order_id")
+
+# Remove columns not needed to save memory  
+orderPr[,c("order_id", 
+           "eval_set",
+           "order_dow",
+           "order_hour_of_day",
+           "days_since_prior_order",
+           "order_dow_var",
+           "order_hod_var",
+           "order_dspo_var"):=NULL]
+
+
+rm(orders, orderPrior, orderTrain)
+gc()
+```
+
+
+# Summarize Data
+```{r}
+# Return the number of orders from the latest order number to the first order
+# excluding the train/test set order number 
+order_diff <- function(late, first){
+  # Subtract train/test order number with first product order with correction -1
+  tmp_diff <- late - first - 1
+  # Will cause an error if product was first time ordered during or the one
+  # before train/test order
+  if((tmp_diff) <= 0){
+    return(1)
+  }
+  return(tmp_diff)
+}
+```
+
+```{r}
+# Needs the order for each user to be in order
+setorder(orderPr, user_id, product_id, order_number)
+          # Days difference in between product purchase
+orderPr[, ':='(diff_days = c(0, diff(abs_days,1)),
+               # The gap between each product's reorder
+               diff_order_num = c(0, diff(order_number))), 
+    by = .(user_id, product_id)]
+
+# Summary of prior data
+                   # The average in between days product purchase exclude 1st  
+priorSum <- orderPr[, .(diff_days_avg = sum(diff_days)/ifelse(.N >1, .N-1, 1),
+                   # The average order_num gap in between product's reorder
+                   diff_order_num_avg = (sum(diff_order_num)/
+                                           ifelse(.N > 1, .N-1, 1)),
+                   # Number of times product was reorodered 
+                   reordered_num = sum(reordered),
+                   # Proportion of times product was reordered
+                   reordered_prop = (sum(reordered)/
+                                       order_diff(order_number_max[[1]],
+                                                  min(order_number))),
+                   # Average number of product added to cart
+                   add_to_cart_order_avg = mean(add_to_cart_order),
+                   # Average number of item in cart when product was purchased
+                   n_item_avg = mean(n_item),
+                   # Last absolute day product was order
+                   last_reordered_day = max(abs_days)),
+               by = .(user_id, product_id)]
+
+# Save memory 
+rm(orderPr)
+gc()
+
+trainDF <- merge(priorSum[user_id %in% unique(orderTr$user_id)], 
+                 orderTr, 
+                 by = c("user_id", "product_id"), 
+                 all = TRUE)
+
+testDF <- merge(priorSum[user_id %in% unique(orderTs$user_id)],
+                orderTs,
+                by = c("user_id"),
+                all.y = TRUE)
+
+# Remove to save memory
+# rm(priorSum, orderTr, orderTs)
+# gc()
+
+# Combine with product's name, department, aisle 
+trainDF %<>% merge(prod_ais_dep[,.(product_id, 
+                                   product_name,
+                                   department, 
+                                   aisle)], by = "product_id")
+
+testDF %<>% merge(prod_ais_dep[,.(product_id, 
+                                   product_name,
+                                   department, 
+                                   aisle)], by = "product_id")
+
+# Remove to save memory 
+rm(prod_ais_dep)
+
+# Days since last pruchase or the product
+trainDF[, days_since_last := abs_days - last_reordered_day]
+testDF[, days_since_last := abs_days - last_reordered_day]
+
+# Remove columns that aren't needed
+trainDF[, c("abs_days", "last_reordered_day", "eval_set", "order_id") := NULL]
+testDF[, c("abs_days", "last_reordered_day", "eval_set") := NULL]
+```
+
+# Fix NAs
+```{r}
+# Remove purchases that are new since no way to predict new purchases
+# 555,793 rows were elimated
+trainDF <- trainDF[!is.na(reordered_num)]
+
+
+```
+
+
+# Finalized 
+```{r}
+# Order columns for viewing purpose  
+# setcolorder(trtsDF, c("user_id",
+#                        "order_id",
+#                        "eval_set",
+#                        "reordered",
+#                        "product_id",
+#                        "product_name",
+#                        "day_since_last",
+#                        "reodered_num",
+#                        "reordered_prop",
+#                        "add_to_cart_order_avg",
+#                        "diff_days_avg",
+#                        "order_dow_var",
+#                        "order_hod_var",
+#                        "order_dspo_var",
+#                        "n_item_avg",
+#                        "order_number_max",
+#                        "aisle",
+#                        "department"))
+```
+
+
+
+
+# Write
+```{r}
+# save(trainDF, testDF, file = "./data/trtsDF_1.RData")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

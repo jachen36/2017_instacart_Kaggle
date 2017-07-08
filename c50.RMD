@@ -1,0 +1,51 @@
+---
+title: "C50 model"
+author: "Jacinto"
+date: "July 6, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(caret)
+```
+
+
+# Import 
+```{r}
+userTrain <- read.csv("data/userTrain.csv")
+userValid <- read.csv("data/userValid.csv")
+
+trainIdx <- 1:nrow(userTrain)
+userAll <- rbind(userTrain,userValid)
+rm(userTrain, userValid)
+
+randTrain <- read.csv("data/randTrain.csv")
+randValid <- read.csv("data/randValid.csv")
+```
+
+#Modeling
+```{r}
+grid1 <- train(reordered~., 
+               data = userAll,
+               metric = "ROC",
+               method = "C5.0",
+               trControl = trainControl(method = "LGOCV",
+                                        summaryFunction = twoClassSummary,
+                                        classProbs = TRUE,
+                                        index = list(TrainSet = trainIdx),
+                                        savePredictions = TRUE,
+                                        verboseIter = TRUE))
+```
+
+```{r}
+grid1
+```
+```{r}
+vImp <- varImp(grid1)
+plot(vImp$importance[vImp$importance$Overall>0,])
+```
+
